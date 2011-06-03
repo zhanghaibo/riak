@@ -1,0 +1,33 @@
+* Riak Index - Prototype 3
+
+** AZ456 - Update Riak REST interface to stuff HTTP headers into object metadata.
+   
+   In =riak_kv_wm_raw= module:
+
+   + Create a malformed_index_headers/2 function to pull anything
+     prefixed with "x-riak-index-" from the request. 
+
+   + Do we want to use dash or underscore for field separators???
+     + Using dashes fits in with existing header names.
+     + Using underscores makes more sense for field names, especially
+       later when we do some sort of query language.
+
+   + Add index_fields attribute to #ctx record. List of field / value
+     pairs.
+
+   + We store the index_fields as lists:
+     + This makes it easier to return return the original field to the
+       user on read.
+     + Means that we need to reparse the types when we need them
+       later. This happens at least once in the Put FSM, again in the
+       VNode, and again if we use the metadata for filtering.
+   
+   #+BEGIN_SRC
+    curl -v -X PUT \
+    -d '{"bar":"baz"}' \
+    -H "Content-Type: application/json" \
+    -H "x-riak-index-field1: value1" \
+    -H "x-riak-INDEX-field2: value2" \
+    -H "x-Riak-INDEX-field3: value3" \
+    http://127.0.0.1:8098/riak/test/doc?returnbody=true
+   #+END_SRC
