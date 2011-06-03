@@ -6,6 +6,11 @@
 
    + Create a malformed_index_headers/2 function to pull anything
      prefixed with "x-riak-index-" from the request. 
+     + We *could* have have made this "x-riak-meta-index-". Decided
+       against it because:
+       1) That would change the meaning of existing fields.
+       2) That could causes problems if we ever want to store index
+          fields somewhere other than object metadata.
 
    + Do we want to use dash or underscore for field separators???
      + Using dashes fits in with existing header names.
@@ -15,9 +20,11 @@
    + Add index_fields attribute to #ctx record. List of field / value
      pairs.
 
-   + We store the index_fields as lists:
+   + We store the index_fields as unparsed lists:
      + This makes it easier to return return the original field to the
-       user on read.
+       user on read. (There is some pain in Riak Search around
+       converting type fields back into the original values on the way
+       out. Doesn't always work as expected.)
      + Means that we need to reparse the types when we need them
        later. This happens at least once in the Put FSM, again in the
        VNode, and again if we use the metadata for filtering.
