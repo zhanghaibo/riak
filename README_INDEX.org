@@ -2,39 +2,51 @@
 
 ** AZ456 - Update Riak REST interface to stuff HTTP headers into object metadata.
    
-   In =riak_kv_wm_raw= module:
-
-   + Create a malformed_index_headers/2 function to pull anything
-     prefixed with "x-riak-index-" from the request. 
-     + We *could* have have made this "x-riak-meta-index-". Decided
-       against it because:
-       1) That would change the meaning of existing fields.
-       2) That could causes problems if we ever want to store index
-          fields somewhere other than object metadata.
-
+   Created a malformed_index_headers/2 function to pull any headers prefixed with "x-riak-index-" from the request. Storing the headers in the object metadata under a slot called "index".
+    
+   Some points for consideration:
+    
+   + We *could* have have made this "x-riak-meta-index-" in order to piggyback on existing metadata. Decided against it because:
+     1. That would change the meaning of existing fields.
+     2. That could causes problems if we ever want to store index fields somewhere other than object metadata.
+    
    + Do we want to use dash or underscore for field separators???
      + Using dashes fits in with existing header names.
-     + Using underscores makes more sense for field names, especially
-       later when we do some sort of query language.
-
-   + Add index_fields attribute to #ctx record. List of field / value
-     pairs.
-
+     + Using underscores makes more sense for field names, especially later when we do some sort of query language. Field names will need some sort of delimiter, since we plan on using Hungarian notation to denote field types.
+    
    + We store the index_fields as unparsed lists:
-     + This makes it easier to return return the original field to the
-       user on read. (There is some pain in Riak Search around
-       converting type fields back into the original values on the way
-       out. Doesn't always work as expected.)
-     + Means that we need to reparse the types when we need them
-       later. This happens at least once in the Put FSM, again in the
-       VNode, and again if we use the metadata for filtering.
+     + This makes it easier to return return the original field to the user on read. (There is some pain in Riak Search around converting type fields back into the original values on the way out. Doesn't always work as expected.)
+     + But, it means that we need to reparse the types when we need them later. This will happen at least once in the Put FSM, again in the VNode, and again if we use the metadata for filtering.
    
-   #+BEGIN_SRC
-    curl -v -X PUT \
-    -d '{"bar":"baz"}' \
-    -H "Content-Type: application/json" \
-    -H "x-riak-index-field1: value1" \
-    -H "x-riak-INDEX-field2: value2" \
-    -H "x-Riak-INDEX-field3: value3" \
-    http://127.0.0.1:8098/riak/test/doc?returnbody=true
-   #+END_SRC
+** AZ457 - Validate indexed fields in the Put FSM.
+   
+   In riak_kv_put_fsm:validate/2, added a pre-commit hook that always runs and is responsible for pulling fields out of metadata and  ensuring that all of the fields parse. 
+
+   If a field fails to parse, then the hook fails just like a normal pre-commit hook, returning {fail, [Reasons]}, where Reason is one of:
+   
+   + {unknown_field_type, Field}
+   + {field_parsing_failed, {Field, Value}}.
+
+   The pre-commit hook is stored in riak_index:validate_object/1. It calls into riak_index:validate_field/2. Types are determined based on suffix. Current types are *_id, *_int, *_float. Currently, a mapping of regular expressions to field types determines which function is used to parse the field:
+
+  : "*_id" -> fun parse_id/1
+  : "*_int" -> fun parse_integer/1
+  : "*_float" -> fun parse_float/1
+
+#+BEGIN_SRC
+
+ # Store an object with field types...
+ curl -v -X PUT \
+ -d '{"bar":"baz"}' \
+ -H "Content-Type: application/json" \
+ -H "x-riak-index-field1_id: A" \
+ -H "x-riak-INDEX-field2_int: 1" \
+ -H "x-Riak-INDEX-field3_float: 3.14" \
+ http://127.0.0.1:8098/riak/test/doc
+
+ # Retrieve the object...
+ curl -i http://127.0.0.1:8098/riak/test/doc?returnbody=true
+
+#+END_SRC
+
+
