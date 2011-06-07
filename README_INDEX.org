@@ -29,9 +29,16 @@
 
    The pre-commit hook is stored in riak_index:validate_object/1. It calls into riak_index:validate_field/2. Types are determined based on suffix. Current types are *_id, *_int, *_float. Currently, a mapping of regular expressions to field types determines which function is used to parse the field:
 
-  : "*_id" -> fun parse_id/1
-  : "*_int" -> fun parse_integer/1
-  : "*_float" -> fun parse_float/1
+   : "*_id" -> fun parse_id/1
+   : "*_int" -> fun parse_integer/1
+   : "*_float" -> fun parse_float/1
+
+** AZ458 - Implement RiakKV Index Backend
+   
+   Copy riak_kv_index_backend from the Riak Index prototype, and implement some minor adjustments for changes we've made in the design of Riak Index.
+
+   riak_kv_index_backend works similarly to multi-backend in that it starts up other backends (riak_kv_bitcask_backend, riak_index_mi_backend) and proxies off requests. It also adds some coordination logic around put, and delete requests. Namely, on a put request, we delete any old index information, pull new index information from the incoming object, and write it to the index before writing to KV. We store the old index information in a "proxy" object inside of merge_index. This allows us to be sure we are cleaning up after the old version of the object appropriately. We store this information in merge_index so that we don't accidentally run into it while doing a KV list keys.
+
 
 #+BEGIN_SRC
 
