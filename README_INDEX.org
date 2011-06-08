@@ -35,9 +35,9 @@
 
 ** AZ458 - Implement RiakKV Index Backend
    
-   Copy riak_kv_index_backend from the Riak Index prototype, and implement some minor adjustments for changes we've made in the design of Riak Index.
+   Copied riak_kv_index_backend from the Riak Index prototype, and implemented some minor adjustments for changes we've made in the design of Riak Index. (Changed the "validate_*" functions to "parse_*" with appropriate updates to return values.)
 
-   riak_kv_index_backend works similarly to multi-backend in that it starts up other backends (riak_kv_bitcask_backend, riak_index_mi_backend) and proxies off requests. It also adds some coordination logic around put, and delete requests. Namely, on a put request, we delete any old index information, pull new index information from the incoming object, and write it to the index before writing to KV. We store the old index information in a "proxy" object inside of merge_index. This allows us to be sure we are cleaning up after the old version of the object appropriately. We store this information in merge_index so that we don't accidentally run into it while doing a KV list keys.
+   riak_kv_index_backend works similarly to multi-backend in that it starts up other backends (riak_kv_bitcask_backend, riak_index_mi_backend) and proxies off requests. It also adds some coordination logic around put and delete requests. Namely, on a put request, we delete any old index information, pull new index information from the incoming object, and write it to the index before writing to KV. We store the old index information in a "proxy" object inside of merge_index. This allows us to be sure we are cleaning up after the old version of the object appropriately. We store this information in merge_index so that we don't accidentally run into it  while doing a KV list keys.
 
 
 #+BEGIN_SRC
