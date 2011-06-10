@@ -39,6 +39,24 @@
 
    riak_kv_index_backend works similarly to multi-backend in that it starts up other backends (riak_kv_bitcask_backend, riak_index_mi_backend) and proxies off requests. It also adds some coordination logic around put and delete requests. Namely, on a put request, we delete any old index information, pull new index information from the incoming object, and write it to the index before writing to KV. We store the old index information in a "proxy" object inside of merge_index. This allows us to be sure we are cleaning up after the old version of the object appropriately. We store this information in merge_index so that we don't accidentally run into it  while doing a KV list keys.
 
+** AZ459 - Implement Querying via ListKeys
+
+   Add riak_client:get_index/2 function for running index queries. This function constructs a "fake" listkeys bucket of the form {index_query, Bucket, Query} and calls `Client:list_keys/N`. List keys eventually calls `riak_kv_index_backend:fold_bucket_keys/N` on riak_kv_index_backend with the provided "fake" bucket. (NOTE: This is temporary code, we will replace it once we finish the "covering cast" work in riak\_core.)
+
+  This calls the new riak_index_mi_backend:fold_index/6 function to perform the query. For the purposes of this Kanban ticket, Query will run against a single field, and is a tuple of the form {Operation, Field, Value} where Operation is 'eq', 'lt', 'lte', etc., Field is the string field, and Value is the parsed value. Future tickets will enable more complexity.
+
+  This change also adds bucket and key indexing with an update to riak_index:parse_object/1. The bucket field is "$bucket" and the key field is "$key".
+
+  This round of changes deviates in a few key areas from the plan we discussed:
+  + SKFun accepts a batch of results, rather than a single result.
+
+  + SKFun results are of the form {PrimaryKey, Properties} rather than {SecondaryKey, PrimaryKey}, and properties contains an entry for {Field, SecondaryKey}. This was done to keep in line with what merge_index already produces which has served well for Riak Search and for early Riak Index prototypes.
+
+  + Exposed "special" fields for bucket and key ($bucket and $key, respectively) rather than exposing operations for 'lt_pk', 'gt_pk', etc. Seemed like a more elegant way to expose the functionality, and took fewer lines of code.
+
+  + Speaking of the "$bucket" field, it seems weird to have operations like `get_index(<<"mybucket">>, [{eq, "$bucket", <<"mybucket">>}])`. Queries are already scoped to the bucket. Should we instead support a `{bucket}` operation that reads all keys for the current bucket? 
+
+  + riak_kv_index_backend takes advantage of merge_index's ability to store large data by using it to store the "proxy" object, which is the collection of postings indexed for a particular object. This is used to cleanup old postings when objects are updated or deleted. Bitcask is probably a better storage engine for this kind of data, but should we store it in the bitcask instance for the current partition, or create a new bitcask instance? Alternatively, we could avoid storing a proxy object, or store the parsed fields as additional metadata, but that would require changes to riak_kv_vnode in order to send the old copy of the object to the backend during put/delete requests.
 
 #+BEGIN_SRC
 
@@ -49,10 +67,15 @@
  -H "x-riak-index-field1_id: A" \
  -H "x-riak-INDEX-field2_int: 1" \
  -H "x-Riak-INDEX-field3_float: 3.14" \
- http://127.0.0.1:8098/riak/test/doc
+ http://127.0.0.1:8098/riak/mybucket/mykey
 
  # Retrieve the object...
- curl -i http://127.0.0.1:8098/riak/test/doc?returnbody=true
+ curl -i http://127.0.0.1:8098/riak/mybucket/mykey?returnbody=true
+
+ %% Query the index...
+ {ok, Client} = riak:local_client().
+ Client:get_index(<<"mybucket">>, [{eq, "$key", <<"mykey">>}]).
+ Client:get_index(<<"mybucket">>, [{eq, "field2_int", 1}]).
 
 #+END_SRC
 
