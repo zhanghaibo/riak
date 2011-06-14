@@ -58,11 +58,22 @@
 
   + riak_kv_index_backend takes advantage of merge_index's ability to store large data by using it to store the "proxy" object, which is the collection of postings indexed for a particular object. This is used to cleanup old postings when objects are updated or deleted. Bitcask is probably a better storage engine for this kind of data, but should we store it in the bitcask instance for the current partition, or create a new bitcask instance? Alternatively, we could avoid storing a proxy object, or store the parsed fields as additional metadata, but that would require changes to riak_kv_vnode in order to send the old copy of the object to the backend during put/delete requests.
 
-** Don't Forget To...
-   
-   + Validate field names during a query.
-   + Address the problem where Erlang messages pile up if a query doesn't finish executing.
+** AZ410 - Statistics
 
+   Updated riak_kv_stat module with the following stats:
+
+   + vnode_index_reads
+   + vnode_index_writes
+   + vnode_index_deletes
+   + vnode_index_writes_postings
+   + vnode_index_deletes_postings
+
+   Added merge_index_cinfo module to expose the following:
+
+   + "Merge Index Buffer Memory"
+   + "Merge Index Total Buffers"
+   + "Merge Index Segment Memory"
+   + "Merge Index Total Segments"
 
 #+BEGIN_SRC
 
