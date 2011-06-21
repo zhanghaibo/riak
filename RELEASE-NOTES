@@ -1,4 +1,12 @@
 -------------------------
+Riak 0.? Release Notes
+-------------------------
+
+Bugs Fixed
+----------
+0520 - vnode throws error during handoff
+
+-------------------------
 Riak 0.14.2 Release Notes
 -------------------------
 
