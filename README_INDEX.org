@@ -1,29 +1,43 @@
 * Riak Index - Prototype 3
 
+** Installation
+
+   Riak Index requires the rtk-dev1 branch of riak and riak_kv, and
+   the master branch of webmachine.
+
+   To get started:
+
+   : git clone github.com/basho/riak
+   : cd riak
+   : git checkout rtk-dev1
+   : make
+   : (cd deps/webmachine; git checkout master)
+   : make stage
+
 ** AZ456 - Update Riak REST interface to stuff HTTP headers into object metadata.
-   
+
    Created a malformed_index_headers/2 function to pull any headers prefixed with "x-riak-index-" from the request. Storing the headers in the object metadata under a slot called "index".
-    
+
    Some points for consideration:
-    
+
    + We *could* have have made this "x-riak-meta-index-" in order to piggyback on existing metadata. Decided against it because:
      1. That would change the meaning of existing fields.
      2. That could causes problems if we ever want to store index fields somewhere other than object metadata.
-    
+
    + Do we want to use dash or underscore for field separators???
      + Using dashes fits in with existing header names.
      + Using underscores makes more sense for field names, especially later when we do some sort of query language. Field names will need some sort of delimiter, since we plan on using Hungarian notation to denote field types.
-    
+
    + We store the index_fields as unparsed lists:
      + This makes it easier to return return the original field to the user on read. (There is some pain in Riak Search around converting type fields back into the original values on the way out. Doesn't always work as expected.)
      + But, it means that we need to reparse the types when we need them later. This will happen at least once in the Put FSM, again in the VNode, and again if we use the metadata for filtering.
-   
+
 ** AZ457 - Validate indexed fields in the Put FSM.
-   
-   In riak_kv_put_fsm:validate/2, added a pre-commit hook that always runs and is responsible for pulling fields out of metadata and  ensuring that all of the fields parse. 
+
+   In riak_kv_put_fsm:validate/2, added a pre-commit hook that always runs and is responsible for pulling fields out of metadata and  ensuring that all of the fields parse.
 
    If a field fails to parse, then the hook fails just like a normal pre-commit hook, returning {fail, [Reasons]}, where Reason is one of:
-   
+
    + {unknown_field_type, Field}
    + {field_parsing_failed, {Field, Value}}.
 
@@ -34,7 +48,7 @@
    : "*_float" -> fun parse_float/1
 
 ** AZ458 - Implement RiakKV Index Backend
-   
+
    Copied riak_kv_index_backend from the Riak Index prototype, and implemented some minor adjustments for changes we've made in the design of Riak Index. (Changed the "validate_*" functions to "parse_*" with appropriate updates to return values.)
 
    riak_kv_index_backend works similarly to multi-backend in that it starts up other backends (riak_kv_bitcask_backend, riak_index_mi_backend) and proxies off requests. It also adds some coordination logic around put and delete requests. Namely, on a put request, we delete any old index information, pull new index information from the incoming object, and write it to the index before writing to KV. We store the old index information in a "proxy" object inside of merge_index. This allows us to be sure we are cleaning up after the old version of the object appropriately. We store this information in merge_index so that we don't accidentally run into it  while doing a KV list keys.
@@ -54,7 +68,7 @@
 
   + We create "special" fields for bucket and key ($bucket and $key, respectively) rather than exposing operations for 'lt_pk', 'gt_pk', etc. Seemed like a more elegant way to expose the functionality, and took fewer lines of code.
 
-  + Speaking of the "$bucket" field, it seems weird to have operations like `get_index(<<"mybucket">>, [{eq, "$bucket", <<"mybucket">>}])`. Queries are already scoped to the bucket. Should we instead support a `{bucket}` operation that reads all keys for the current bucket? 
+  + Speaking of the "$bucket" field, it seems weird to have operations like `get_index(<<"mybucket">>, [{eq, "$bucket", <<"mybucket">>}])`. Queries are already scoped to the bucket. Should we instead support a `{bucket}` operation that reads all keys for the current bucket?
 
   + riak_kv_index_backend takes advantage of merge_index's ability to store large data by using it to store the "proxy" object, which is the collection of postings indexed for a particular object. This is used to cleanup old postings when objects are updated or deleted. Bitcask is probably a better storage engine for this kind of data, but should we store it in the bitcask instance for the current partition, or create a new bitcask instance? Alternatively, we could avoid storing a proxy object, or store the parsed fields as additional metadata, but that would require changes to riak_kv_vnode in order to send the old copy of the object to the backend during put/delete requests.
 
@@ -75,25 +89,143 @@
    + "Merge Index Segment Memory"
    + "Merge Index Total Segments"
 
-#+BEGIN_SRC
+** AZ460 - Update webmachine dispatch list to support guard function.
 
- # Store an object with field types...
- curl -v -X PUT \
- -d '{"bar":"baz"}' \
- -H "Content-Type: application/json" \
- -H "x-riak-index-field1_id: A" \
- -H "x-riak-INDEX-field2_int: 1" \
- -H "x-Riak-INDEX-field3_float: 3.14" \
- http://127.0.0.1:8098/riak/mybucket/mykey
+   Update webmachine to dispatch guards. Can now use path specs of the
+   form `{PathSpec, Guard, Mod, Options}` where Guard is either a
+   function or a {Mod, Fun} tuple. The function has
+   arity 1. Webmachine runs the guard, passing in the request object
+   as the sole parameter. The route can only match if the function
+   returns true.
 
- # Retrieve the object...
- curl -i http://127.0.0.1:8098/riak/mybucket/mykey?returnbody=true
+** AZ512 - Split up riak_kv_wm_raw module, add new HTTP API routes.
 
- %% Query the index...
- {ok, Client} = riak:local_client().
- Client:get_index(<<"mybucket">>, [{eq, "$key", <<"mykey">>}]).
- Client:get_index(<<"mybucket">>, [{eq, "field2_int", 1}]).
+   Split riak_kv_wm_raw into smaller modules:
 
-#+END_SRC
+   + riak_kv_wm_buckets - Handle listing buckets.
+   + riak_kv_wm_props   - Handles setting and getting bucket properties.
+   + riak_kv_wm_keylist - Handles listing keys in a bucket.
+   + riak_kv_wm_object  - Handles object reads and writes.
+   + riak_kv_wm_utils - Common utilities.
 
+   Add webmachine routes for HTTP API version 2:
 
+   + `/buckets?buckets=true` - List buckets.
+   + `/buckets/mybucket/props` - Access bucket properties props.
+   + `/buckets/mybucket/keys?keys=true` - List keys.
+   + `/buckets/mybucket/keys/mykey` - Access an object.
+   + `/buckets/mybucket/keys/mykey/*` - Linkwalking.
+
+   Update link formatting to change depending on whether we are
+   hitting the API with the new or old path.
+
+   Tested with the PHP and Python Clients:
+
+   : # Using PHP client...
+   : git clone git@github.com:basho/riak-php-client.git
+   : cd riak-php-client
+   : php unit-test.php
+   :
+   : # Using Python client...
+   : git clone git@github.com:basho/riak-python-client.git
+   : cd riak-python-client
+   : python setup.py install
+   : python setup.py test
+
+   Tested with scripts:
+
+   * httptest_old.sh - Exercise the old http interface.
+   * httptest_new.sh - Exercise the new http interface.
+
+   Set up 0.14.2 on port 8091, and latest version on port 8098. Then run:
+
+   : # Exercise the old API on the old code.
+   : ./httptest_old.sh 8091 oldbucket > oldbucket_8091.output
+   :
+   : # Exercise the old API on the new code.
+   : ./httptest_old.sh 8098 oldbucket > oldbucket_8098.output
+   :
+   : # Exercise the new API on the new code.
+   : ./httptest_new.sh 8098 newbucket > newbucket_8098.output
+   :
+   : # Compare old API on old code vs. new code.
+   : opendiff oldbucket_8091.output oldbucket_8098.output
+   :
+   : # Compare old API vs. new API on new code.
+   : opendiff oldbucket_8098.output newbucket_8098.output
+
+   A few review points:
+
+   + If you want to test this locally, make sure you have commit '97d37db' of Webmachine, pull request https://github.com/basho/webmachine/pull/28 (AZ460). Switch to `deps/webmachine` then run `git pull; git checkout AZ460-guard-functions`.
+
+   + `riak_kv_wm_raw.hrl` should probably change to `riak_kv_wm.hrl`, but it is a dependency of Luwak, so I left it alone.
+
+   + `riak_kv_wm_keylist.erl` calls into `riak_kv_wm_props.erl` in order to support listing props and keys at the same time. If/when we remove the old API, we can get rid of this.
+
+** AZ515 - Add riak_kv_wm_index for 2I Access
+
+   Implement `riak_kv_wm_index` to allow for index queries via the HTTP API.
+
+   Best described by example:
+
+   : # Index some documents...
+   :
+   : curl -v -X PUT \
+   : -d 'data1' \
+   : -H "Content-Type: application/json" \
+   : -H "x-riak-index-field1_bin: val1" \
+   : -H "x-riak-index-field2_int: 1001" \
+   : http://127.0.0.1:8098/riak/mybucket/mykey1
+   :
+   : curl -v -X PUT \
+   : -d 'data2' \
+   : -H "Content-Type: application/json" \
+   : -H "x-riak-index-Field1_bin: val2" \
+   : -H "x-riak-index-Field2_int: 1002" \
+   : http://127.0.0.1:8098/riak/mybucket/mykey2
+   :
+   : curl -v -X PUT \
+   : -d 'data3' \
+   : -H "Content-Type: application/json" \
+   : -H "X-RIAK-INDEX-FIELD1_BIN: val3" \
+   : -H "X-RIAK-INDEX-FIELD2_INT: 1003" \
+   : http://127.0.0.1:8098/riak/mybucket/mykey3
+   :
+   : curl -v -X PUT \
+   : -d 'data4' \
+   : -H "Content-Type: application/json" \
+   : -H "x-riak-index-field1_bin: val4" \
+   : -H "x-riak-index-field2_int: 1004" \
+   : http://127.0.0.1:8098/riak/mybucket/mykey4
+   :
+   : # Retrieve the documents...
+   :
+   : curl -i http://127.0.0.1:8098/riak/mybucket/mykey1
+   : curl -i http://127.0.0.1:8098/riak/mybucket/mykey2
+   : curl -i http://127.0.0.1:8098/riak/mybucket/mykey3
+   : curl -i http://127.0.0.1:8098/riak/mybucket/mykey4
+   :
+   : # Query against a binary field...
+   :
+   : curl http://localhost:8098/buckets/mybucket/index/field1_bin/eq/val1
+   : curl http://localhost:8098/buckets/mybucket/index/field1_bin/lte/val2
+   : curl http://localhost:8098/buckets/mybucket/index/field1_bin/range/val2/val4
+   :
+   : # Query against an integer field...
+   :
+   : curl http://localhost:8098/buckets/mybucket/index/field2_int/eq/1001
+   : curl http://localhost:8098/buckets/mybucket/index/field2_int/lte/1002
+   : curl http://localhost:8098/buckets/mybucket/index/field2_int/range/1002/1004
+   :
+   : # Query against the speciel fields $bucket and $key
+   :
+   : curl http://localhost:8098/buckets/mybucket/index/\$bucket/eq/mybucket
+   : curl http://localhost:8098/buckets/mybucket/index/\$key/range/mykey2/mykey3
+
+   Other Changes:
+
+   + Update riak_index to treat all index fields and value as binaries.
+   + Normalize field names as lowercase.
+   + Remove float support.
+   + Add range query operator.
+   + Update riak_kv_wm_object.erl to store the parsed fields in the riak object, and update the index backend to use the parsed fields.
