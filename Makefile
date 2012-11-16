@@ -25,8 +25,8 @@ testclean:
 test: deps compile testclean
 	@$(foreach dep, \
             $(wildcard deps/*), \
-                ./rebar eunit app=$(notdir $(dep)) \
-                    || echo "Eunit: $(notdir $(dep)) FAILED" >> $(TEST_LOG_FILE);)
+               (cd $(dep) && ../../rebar eunit deps_dir=.. skip_deps=true)  \
+               || echo "Eunit: $(notdir $(dep)) FAILED" >> $(TEST_LOG_FILE);)
 	./rebar eunit skip_deps=true
 	@if test -s $(TEST_LOG_FILE) ; then \
              cat $(TEST_LOG_FILE) && \
@@ -45,15 +45,30 @@ relclean:
 ##
 ## Developer targets
 ##
-stagedevrel: dev1 dev2 dev3 dev4
-	$(foreach dev,$^,\
-	  $(foreach dep,$(wildcard deps/*), rm -rf dev/$(dev)/lib/$(shell basename $(dep))-* && ln -sf $(abspath $(dep)) dev/$(dev)/lib;))
+##  devN - Make a dev build for node N
+##  stagedevN - Make a stage dev build for node N (symlink libraries)
+##  devrel - Make a dev build for 1..$DEVNODES
+##  stagedevrel Make a stagedev build for 1..$DEVNODES
+##
+##  Example, make a 68 node devrel cluster
+##    make stagedevrel DEVNODES=68
 
-devrel: dev1 dev2 dev3 dev4
+.PHONY : stagedevrel devrel
+DEVNODES ?= 4
 
-dev1 dev2 dev3 dev4: all
+# 'seq' is not available on all *BSD, so using an alternate in awk
+SEQ = $(shell awk 'BEGIN { for (i = 1; i < '$(DEVNODES)'; i++) printf("%i ", i); print i ;exit(0);}')
+
+$(eval stagedevrel : $(foreach n,$(SEQ),stagedev$(n)))
+$(eval devrel : $(foreach n,$(SEQ),dev$(n)))
+
+dev% : all
 	mkdir -p dev
+	rel/gen_dev $@ rel/vars/dev_vars.config.src rel/vars/$@_vars.config
 	(cd rel && ../rebar generate target_dir=../dev/$@ overlay_vars=vars/$@_vars.config)
+
+stagedev% : dev%
+	  $(foreach dep,$(wildcard deps/*), rm -rf dev/$^/lib/$(shell basename $(dep))-* && ln -sf $(abspath $(dep)) dev/$^/lib;)
 
 devclean: clean
 	rm -rf dev
@@ -66,7 +81,6 @@ stage : rel
 ##
 docs:
 	./rebar skip_deps=true doc
-	@cp -R apps/luke/doc doc/luke
 	@cp -R apps/riak_core/doc doc/riak_core
 	@cp -R apps/riak_kv/doc doc/riak_kv
 
