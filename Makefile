@@ -110,7 +110,8 @@ orgs-README:
 	@mv README.txt README
 
 APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools crypto inets \
-	xmerl webtool snmp public_key mnesia eunit syntax_tools compiler
+	xmerl webtool snmp public_key mnesia eunit syntax_tools compiler \
+	edoc
 COMBO_PLT = $(HOME)/.$(REPO)_combo_dialyzer_plt
 
 check_plt: compile
